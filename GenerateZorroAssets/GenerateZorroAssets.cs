@@ -43,6 +43,9 @@ namespace cAlgo.Robots
       private List<List<List<string>>> mInfoLists = new List<List<List<string>>>();
       private string[] mExcludeSplit;
       private int mSymbolCount;
+      private int mWriteCount;
+      private int mSymbolsCount;
+      private StreamWriter mZorroAssetsWriter;
       readonly CultureInfo UsCulture = new CultureInfo("en-US");
       #endregion
 
@@ -50,8 +53,10 @@ namespace cAlgo.Robots
       protected override void OnStart()
       {
          if (IsLaunchDebugger) Debugger.Launch();
+         mSymbolsCount = Symbols.Count;
+         //mSymbolsCount = 10;
 
-         Print("Number of Symbols: " + Symbols.Count);
+         Print("Number of Symbols: " + mSymbolsCount);
          Print("Please wait a few minutes to load the symbols...");
       }
       #endregion
@@ -59,40 +64,42 @@ namespace cAlgo.Robots
       #region OnTick
       protected override void OnTick()
       {
-         if (mSymbolCount < Symbols.Count)
-         {
-            mExcludeSplit = ExcludeCsv.Split(",");
-            Symbol sym = null;
-
-            var isExcluded = false;
-            foreach (var ex in mExcludeSplit)
-               if ("" != ex && Symbols[mSymbolCount].ToLower().Contains(ex.ToLower()))
+         //if (Time.Hour >= 9)
+         //   if (Time.Hour <= 16)
+               if (mSymbolCount < mSymbolsCount)
                {
-                  Print((mSymbolCount + 1).ToString() + " " + Symbols[mSymbolCount] + " excluded");
-                  isExcluded = true;
-                  break;
-               }
+                  mExcludeSplit = ExcludeCsv.Split(",");
+                  Symbol sym = null;
 
-            if (!isExcluded)
-            {
-               Print((mSymbolCount + 1).ToString() + " " + Symbols[mSymbolCount]);
-               sym = Symbols.GetSymbol(Symbols[mSymbolCount]);
+                  var isExcluded = false;
+                  foreach (var ex in mExcludeSplit)
+                     if ("" != ex && Symbols[mSymbolCount].ToLower().Contains(ex.ToLower()))
+                     {
+                        Print((mSymbolCount + 1).ToString() + " " + Symbols[mSymbolCount] + " excluded");
+                        isExcluded = true;
+                        break;
+                     }
 
-               if (sym.IsTradingEnabled && !Double.IsNaN(sym.Spread))  // some sybols have a Spread of NaN ?!)
-                  mSymInfos.Add(new SymInfo
+                  if (!isExcluded)
                   {
-                     Symbol = sym
-                  });
-               else
-                  Print((mSymbolCount + 1).ToString() + " " + Symbols[mSymbolCount] + " invalid");
-            }
+                     Print((mSymbolCount + 1).ToString() + " " + Symbols[mSymbolCount]);
+                     sym = Symbols.GetSymbol(Symbols[mSymbolCount]);
 
-            mSymbolCount++;
-         }
-         else
-         {
-            if (Time.Hour >= 6)
-               if (Time.Hour <= 14)
+                     if (null != sym
+                           && sym.IsTradingEnabled
+                           && !Double.IsNaN(sym.Spread))  // some sybols have a Spread of NaN ?!)
+                        mSymInfos.Add(new SymInfo
+                        {
+                           Symbol = sym
+                        });
+                     else
+                        Print((mSymbolCount + 1).ToString() + " " + Symbols[mSymbolCount] + " invalid");
+                  }
+
+                  mSymbolCount++;
+               }
+               else if (mSymInfos[^1].SpreadTickCount < 100)
+               {
                   for (int i = 0; i < mSymInfos.Count; i++)
                   {
                      mSymInfos[i].SpreadSum += mSymInfos[i].Symbol.Spread;
@@ -100,62 +107,68 @@ namespace cAlgo.Robots
 
                      mSymInfos[i].AvgSpread = mSymInfos[i].SpreadSum / mSymInfos[i].SpreadTickCount;
                   }
-
-            if (mSymInfos[mSymInfos.Count - 1].SpreadTickCount == 100)
-            {
-               // write Zorro Assets file i.e Assets_Pepperstone_Live.csv
-               var zorroAssetsPath = Path.Combine(ZorroHistoryPath, "Assets_"
-                  + Account.BrokerName + "_" + (Account.IsLive ? "Live" : "Demo") + ".csv");
-               var zorroAssetsWriter = new StreamWriter(File.OpenWrite(zorroAssetsPath));
-
-               zorroAssetsWriter.WriteLine("Name,Price,Spread,RollLong,RollShort,PIP,PIPCost,MarginCost,Market,Multiplier,Commission,Symbol,Leverage,Lotsize,Base,Quote");
-
-               for (int i = 0; i < mSymInfos.Count; i++)
+               }
+               else if (mWriteCount < mSymbolsCount)
                {
-                  Print((i + 1).ToString() + "Writing " + mSymInfos[i].Symbol.Name);
+                  // write Zorro Assets file i.e Assets_Pepperstone_Live.csv
+                  if (null == mZorroAssetsWriter)
+                  {
+                     var zorroAssetsPath = Path.Combine(ZorroHistoryPath, "Assets_"
+                        + Account.BrokerName + "_" + (Account.IsLive ? "Live" : "Demo") + ".csv");
+                     mZorroAssetsWriter = new StreamWriter(File.OpenWrite(zorroAssetsPath));
+                     mZorroAssetsWriter.WriteLine("Name,Price,Spread,RollLong,RollShort,PIP,PIPCost,MarginCost,Market,Multiplier,Commission,Symbol,Leverage,Lotsize,Base,Quote");
+                  }
 
-                  var digits = mSymInfos[i].Symbol.Digits;
-                  var line = mSymInfos[i].Symbol.Name                                        // User symbol name
-                     + "," + mSymInfos[i].Symbol.Bid.ToString($"F{digits}", UsCulture)       // Price
-                     + "," + mSymInfos[i].AvgSpread.ToString($"F{digits + 1}", UsCulture)    // Spread
-                     + "," + mSymInfos[i].Symbol.SwapLong.ToString($"F{5}", UsCulture)       // Swap long
-                     + "," + mSymInfos[i].Symbol.SwapShort.ToString($"F{5}", UsCulture)      // Swap short
-                     + "," + mSymInfos[i].Symbol.PipSize.ToString($"F{digits}", UsCulture)   // Pip size
-                     + "," + (mSymInfos[i].Symbol.PipValue * mSymInfos[i].Symbol.LotSize)    // Value of 1 pip profit or loss per lot
+                  Print((mWriteCount + 1).ToString() + " Writing " + mSymInfos[mWriteCount].Symbol.Name);
+
+                  var digits = mSymInfos[mWriteCount].Symbol.Digits;
+                  var line = mSymInfos[mWriteCount].Symbol.Name                                        // User symbol name
+                     + "," + mSymInfos[mWriteCount].Symbol.Bid.ToString($"F{digits}", UsCulture)       // Price
+                     + "," + mSymInfos[mWriteCount].AvgSpread.ToString($"F{digits + 1}", UsCulture)    // Spread
+                     + "," + mSymInfos[mWriteCount].Symbol.SwapLong.ToString($"F{5}", UsCulture)       // Swap long
+                     + "," + mSymInfos[mWriteCount].Symbol.SwapShort.ToString($"F{5}", UsCulture)      // Swap short
+                     + "," + mSymInfos[mWriteCount].Symbol.PipSize.ToString($"F{digits}", UsCulture)   // Pip size
+                     + "," + (mSymInfos[mWriteCount].Symbol.PipValue * mSymInfos[mWriteCount].Symbol.LotSize)    // Value of 1 pip profit or loss per lot
                         .ToString($"F{8}", UsCulture)
-                     + "," + mSymInfos[i].Symbol.GetEstimatedMargin(TradeType.Buy, mSymInfos[i].Symbol.LotSize)   // Margin
+                     + "," + mSymInfos[mWriteCount].Symbol.GetEstimatedMargin(TradeType.Buy, mSymInfos[mWriteCount].Symbol.LotSize)   // Margin
                         .ToString($"F{2}", UsCulture)
                      // Market open hours ZZZ:HHMM-HHMM, for instance EST:0930-1545
-                     + ",UTC:" + mSymInfos[i].Symbol.MarketHours.Sessions[1].StartTime.ToString(@"hh\:mm")
-                        + "-" + mSymInfos[i].Symbol.MarketHours.Sessions[1].EndTime.ToString(@"hh\:mm")
-                     + "," + mSymInfos[i].Symbol.VolumeInUnitsMin.ToString($"F{8}", UsCulture)  // Min volume
-                     + "," + mSymInfos[i].Symbol.Commission.ToString($"F{2}", UsCulture)     // Commission
-                     + "," + mSymInfos[i].Symbol                                             // Broker symbol Name
-                     + "," + (int)mSymInfos[i].Symbol.DynamicLeverage[0].Leverage            // Leverage
-                     + "," + mSymInfos[i].Symbol.LotSize.ToString($"F{2}", UsCulture)        // LotSize
-                     + "," + mSymInfos[i].Symbol.BaseAsset                                   // Base currency
-                     + "," + mSymInfos[i].Symbol.QuoteAsset;                                 // Quote currency
+                     + ",UTC:" + mSymInfos[mWriteCount].Symbol.MarketHours.Sessions[1].StartTime.ToString(@"hh\:mm")
+                        + "-" + mSymInfos[mWriteCount].Symbol.MarketHours.Sessions[1].EndTime.ToString(@"hh\:mm")
+                     + "," + mSymInfos[mWriteCount].Symbol.VolumeInUnitsMin.ToString($"F{8}", UsCulture)  // Min volume
+                     + "," + mSymInfos[mWriteCount].Symbol.Commission.ToString($"F{2}", UsCulture)     // Commission
+                     + "," + mSymInfos[mWriteCount].Symbol                                             // Broker symbol Name
+                     + "," + ((mSymInfos[mWriteCount].Symbol.DynamicLeverage != null
+                              && mSymInfos[mWriteCount].Symbol.DynamicLeverage.Count > 0
+                                 ? (int)mSymInfos[mWriteCount].Symbol.DynamicLeverage[0].Leverage       // Leverage
+                                 : ""))
+                     + "," + mSymInfos[mWriteCount].Symbol.LotSize.ToString($"F{2}", UsCulture)        // LotSize
+                     + "," + mSymInfos[mWriteCount].Symbol.BaseAsset                                   // Base currency
+                     + "," + mSymInfos[mWriteCount].Symbol.QuoteAsset;                                 // Quote currency
 
-                  zorroAssetsWriter.WriteLine(line);
+                  mZorroAssetsWriter.WriteLine(line);
+                  mWriteCount++;
+               }
+               else
+               {
+                  mZorroAssetsWriter.Close();
+                  Stop();
                }
 
-               zorroAssetsWriter.Close();
-               Stop();
-            }
-         }
          #region Comment
          if (RunningMode.VisualBacktesting == RunningMode
             || RunningMode.RealTime == RunningMode)
-         {
-            var myComm = "Current UTC: " + Time.ToString("dd.MM.yyyy HH:mm:ss")
-               + "\nCount waiting for " + Symbols.Count + " symbols: " + mSymbolCount + " " + Symbols[mSymbolCount - 1]
-               + "\nCount waiting for 100 ticks: " + mSymInfos[mSymInfos.Count - 1].SpreadTickCount;
-            Chart.DrawStaticText("Comment",
-               myComm,
-               VerticalAlignment.Top,
-               HorizontalAlignment.Left,
-               Chart.ColorSettings.ForegroundColor);
-         }
+            if (mSymInfos.Count >= 1)
+            {
+               var myComm = "Current UTC: " + Time.ToString("dd.MM.yyyy HH:mm:ss")
+                  + "\nCount waiting for " + mSymbolsCount + " symbols: " + mSymbolCount + " " + Symbols[mSymbolCount - 1]
+                  + "\nCount waiting for 100 ticks: " + mSymInfos[^1].SpreadTickCount;
+               Chart.DrawStaticText("Comment",
+                        myComm,
+                        VerticalAlignment.Top,
+                        HorizontalAlignment.Left,
+                        Chart.ColorSettings.ForegroundColor);
+            }
          #endregion
       }
       #endregion
