@@ -112,6 +112,8 @@ namespace cAlgo.Robots
 
                for (int i = 0; i < mSymInfos.Count; i++)
                {
+                  Print((i + 1).ToString() + "Writing " + mSymInfos[i].Symbol.Name);
+
                   var digits = mSymInfos[i].Symbol.Digits;
                   var line = mSymInfos[i].Symbol.Name                                        // User symbol name
                      + "," + mSymInfos[i].Symbol.Bid.ToString($"F{digits}", UsCulture)       // Price
